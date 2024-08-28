@@ -47,12 +47,20 @@ pico_sdk_init()
 
 add_subdirectory(lib/lvgl)
 
+include_directories(lib/lvgl)
+include_directories(lib/lvgl/src/drivers/display/st7789)
+include_directories(lib/lvgl/examples/get_started)
+
 # Add executable. Default name is the project name, version 0.1
 add_executable(main
         main.c
         )
 
-target_link_libraries(main pico_stdlib hardware_spi hardware_dma lvgl)
+target_link_libraries(main pico_stdlib hardware_spi hardware_dma hardware_pwm lvgl lvgl::examples)
+
+# enable usb output, disable uart output
+pico_enable_stdio_usb(main 1)
+pico_enable_stdio_uart(main 0)
 
 # create map/bin/hex file etc.
 pico_add_extra_outputs(main)
