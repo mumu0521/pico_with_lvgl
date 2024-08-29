@@ -14,11 +14,16 @@
 #include "pico/binary_info.h"
 #include "pico/stdlib.h"
 #include <hardware/gpio.h>
+#include <src/display/lv_display.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "lvgl.h"
 #include "lv_st7789.h"
 #include "lv_example_get_started.h"
+#include "lv_demo_benchmark.h"
+
+#define LCD_H_RES 135
+#define LCD_V_RES 240
 
 #define PLL_SYS_KHZ (150 * 1000)
 #define LCD_SPI_PORT (spi1)
@@ -42,8 +47,7 @@ void lcd_send_cmd(lv_display_t *disp,
                   const uint8_t *param,
                   size_t param_size)
 {
-    spi_init(LCD_SPI_PORT, 60 * 1000 * 1000);
-
+    spi_set_format(LCD_SPI_PORT, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
     gpio_put(LCD_DC_PIN, 0);
     gpio_put(LCD_CS_PIN, 0);
     //* write cmd
@@ -63,20 +67,16 @@ void lcd_send_color(lv_display_t *disp,
                     uint8_t *param,
                     size_t param_size)
 {
-    spi_init(LCD_SPI_PORT, 60 * 1000 * 1000);
-
+    spi_set_format(LCD_SPI_PORT, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
     gpio_put(LCD_DC_PIN, 0);
     gpio_put(LCD_CS_PIN, 0);
 
     spi_write_blocking(LCD_SPI_PORT, cmd, cmd_size);
     gpio_put(LCD_DC_PIN, 1);
     spi_set_format(LCD_SPI_PORT, 16, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
-
-    spi_write16_blocking(LCD_SPI_PORT, (uint16_t *) param, (param_size / 2));
-    lv_display_flush_ready(disp);
-    // dma_channel_configure(dma_tx, &c, &spi_get_hw(LCD_SPI_PORT)->dr,
-    //                       (void *) param,  // read address
-    //                       (param_size / 2), true);
+    dma_channel_configure(dma_tx, &c, &spi_get_hw(LCD_SPI_PORT)->dr,
+                          (void *) param,  // read address
+                          (param_size / 2), true);
 }
 
 static void dma_handler(void)
@@ -84,7 +84,7 @@ static void dma_handler(void)
     if (dma_channel_get_irq0_status(dma_tx)) {
         dma_channel_acknowledge_irq0(dma_tx);
         gpio_put(LCD_CS_PIN, 1);
-        // lv_display_flush_ready();
+        lv_display_flush_ready(disp);
     }
 }
 
@@ -128,27 +128,37 @@ int main()
     gpio_set_dir(LCD_BL_PIN, GPIO_OUT);
     gpio_put(LCD_BL_PIN, 1);
 
-
     // DMA Config
     dma_tx = dma_claim_unused_channel(true);
     c = dma_channel_get_default_config(dma_tx);
     channel_config_set_transfer_data_size(&c, DMA_SIZE_16);
     channel_config_set_dreq(&c, spi_get_dreq(LCD_SPI_PORT, true));
+    dma_channel_set_irq0_enabled(dma_tx, true);
+    irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
+    irq_set_enabled(DMA_IRQ_0, true);
+
 
     add_repeating_timer_ms(5, repeating_lvgl_timer_callback, NULL, &lvgl_timer);
 
-    disp = lv_st7789_create(135, 240, LV_LCD_FLAG_NONE, lcd_send_cmd,
-                            lcd_send_color);
+    lv_init();
 
-    lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_270);
+    disp = lv_st7789_create(LCD_H_RES, LCD_V_RES, LV_LCD_FLAG_NONE,
+                            lcd_send_cmd, lcd_send_color);
+
+    lv_st7789_set_gap(disp, 40, 53);
+    lv_st7789_set_invert(disp, true);
+
+    if (disp == NULL) {
+        LV_LOG_ERROR("Create failed\n");
+    }
+    lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
 
     /* Allocate draw buffers on the heap. In this example we use two partial
      * buffers of 1/10th size of the screen */
     lv_color_t *buf1 = NULL;
-    lv_color_t *buf2 = NULL;
 
     uint32_t buf_size =
-        240 * 135 / 10 *
+        LCD_H_RES * LCD_V_RES / 10 *
         lv_color_format_get_size(lv_display_get_color_format(disp));
 
     buf1 = lv_malloc(buf_size);
@@ -157,20 +167,14 @@ int main()
         return 0;
     }
 
-    buf2 = lv_malloc(buf_size);
-    if (buf2 == NULL) {
-        LV_LOG_ERROR("display buffer malloc failed");
-        lv_free(buf1);
-        return 0;
-    }
-    lv_display_set_buffers(disp, buf1, buf2, buf_size,
+    lv_display_set_buffers(disp, buf1, NULL, buf_size,
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
 
-    lv_example_get_started_1();
+    // lv_example_get_started_1();
+    lv_demo_benchmark();
 
     while (true) {
         lv_task_handler();
-        printf("hello\n");
         sleep_ms(5);
     }
 }
